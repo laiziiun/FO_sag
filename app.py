@@ -1025,10 +1025,10 @@ with st.sidebar:
     st.header("Cutter")
     cutter_height_m = st.number_input(
         "Cutter active height, absolute Z (m)",
-        value=20.0,
+        value=3.0,
         step=1.0,
         format="%.3f",
-        help="Enter any integer or decimal height. Default is 20 m to make the demo intercept visible; enter 1–2 m for low ground-mounted cutter studies."
+        help="Enter any integer or decimal height. Default is 3m"
     )
     cutter_length_m = st.number_input("Cutter active length / span (m)", min_value=0.1, max_value=500.0, value=20.0, step=1.0)
 
