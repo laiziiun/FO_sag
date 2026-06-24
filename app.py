@@ -974,12 +974,12 @@ st.title("Drone fibre-optic cable sag model: model selector + protected convex-h
 
 st.markdown(
     """
-This app models a drone fibre-optic cable and recommends a finite-length cutter deployment.
+Best viewed on laptop / PC, not on phone. App models a drone fibre-optic cable and recommends a finite-length cutter deployment.
 The protected asset is defined by raw ground points; the app automatically forms a **convex hull** and extrudes it into a transparent 3D volume.
 
 The key fix in this version is the **cable regime selector**. Close/high/tensioned cases often have no ground contact, so the app should not force a ground-lift-off catenary.
 
-**Default scenario:** a compact Singapore-style demonstration case: source at ground level, drone at 900 m range and 120 m altitude, a medium-sized protected footprint around 650–850 m downrange, 200 m protected volume height, light fibre cable, and light head/crosswind. These defaults are for visualisation and sensitivity testing, not flight authorisation.
+**Default scenario:** liftoff at ground level, drone at 900 m range and 120 m altitude, protected footprint around 650–850 m downrange, 200 m protected volume height, light fibre cable, and light head/crosswind. These defaults are for visualisation and sensitivity testing. Normal for site to take a minute to load.
 """
 )
 
