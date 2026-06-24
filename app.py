@@ -805,7 +805,7 @@ def make_3d_plot(df, hull, raw_points, z_min, z_max, liftoff_xyz, drone_xyz, ent
         ))
 
     fig.update_layout(
-        title="3D protected volume, cable path and recommended cutter deployment",
+        title="3D protected volume, cable path and recommended cutter deployment. Hold left click to rotate, hold right click to pan, mousewheel to zoom.",
         scene=dict(
             xaxis_title="World X (m)",
             yaxis_title="World Y (m)",
