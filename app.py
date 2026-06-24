@@ -1925,3 +1925,4 @@ The app does this with a nested solve:
 2. Adjust `Ty0` until the final lateral endpoint matches the drone local `y=0`.
 
 If the solver cannot bracket the final lateral position, widen the `Ty0` lower/upper bracket.
+"""
