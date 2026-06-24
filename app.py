@@ -1,3 +1,4 @@
+
 import math
 import numpy as np
 import pandas as pd
@@ -410,6 +411,7 @@ def solve_H0_for_ground_range(
     """
     Ground-contact solve mode.
     Finds H0 such that the ground-lift-off curve reaches drone height at x=target_x_m.
+    This only constrains x. If crosswind is present, prefer solve_H0_Ty0_for_ground_endpoint().
     """
 
     def run(H):
@@ -469,6 +471,242 @@ def solve_H0_for_ground_range(
     return best_H, best_x, best_df, None
 
 
+def solve_H0_for_ground_range_given_Ty(
+    target_x_m,
+    drone_height_above_liftoff_m,
+    mass_kg_per_m,
+    diameter_m,
+    cd,
+    rho,
+    drone_speed_mps,
+    headwind_mps,
+    crosswind_mps,
+    climb_rate_mps,
+    Ty0_N,
+    ds_m,
+    max_s_m,
+    include_drag,
+    H_min,
+    H_max,
+    iterations=45,
+):
+    """
+    Inner solve for crosswind endpoint matching.
+    Given Ty0, find H0 such that the curve reaches drone height at x=target_x_m.
+    Returns final y as well, so the outer solve can adjust Ty0.
+    """
+
+    def run(H):
+        df, ok = simulate_ground_liftoff_local(
+            H,
+            drone_height_above_liftoff_m,
+            mass_kg_per_m,
+            diameter_m,
+            cd,
+            rho,
+            drone_speed_mps,
+            headwind_mps,
+            crosswind_mps,
+            climb_rate_mps,
+            Ty0_N,
+            ds_m,
+            max_s_m,
+            include_drag,
+        )
+        if not ok or len(df) == 0:
+            return None, None, ok, df
+        return float(df["x_local_m"].iloc[-1]), float(df["y_local_m"].iloc[-1]), ok, df
+
+    x_lo, y_lo, ok_lo, df_lo = run(H_min)
+    x_hi, y_hi, ok_hi, df_hi = run(H_max)
+
+    if x_lo is None or x_hi is None:
+        return None, None, None, None, "Could not reach drone height within max cable length for this Ty0."
+
+    if not (min(x_lo, x_hi) <= target_x_m <= max(x_lo, x_hi)):
+        return None, None, None, None, (
+            f"For Ty0={Ty0_N:.3g} N, target x is outside H0 bracket. "
+            f"At H0={H_min:.3g} N, x≈{x_lo:.1f} m; "
+            f"at H0={H_max:.3g} N, x≈{x_hi:.1f} m."
+        )
+
+    lo, hi = H_min, H_max
+    best_H, best_x, best_y, best_df = None, None, None, None
+
+    # Support either monotonic direction, though x normally increases with H.
+    increasing = x_hi >= x_lo
+
+    for _ in range(iterations):
+        mid = 0.5 * (lo + hi)
+        x_mid, y_mid, ok_mid, df_mid = run(mid)
+
+        if x_mid is None:
+            lo = mid
+            continue
+
+        best_H, best_x, best_y, best_df = mid, x_mid, y_mid, df_mid
+
+        if increasing:
+            if x_mid < target_x_m:
+                lo = mid
+            else:
+                hi = mid
+        else:
+            if x_mid > target_x_m:
+                lo = mid
+            else:
+                hi = mid
+
+    return best_H, best_x, best_y, best_df, None
+
+
+def solve_H0_Ty0_for_ground_endpoint(
+    target_x_m,
+    target_y_m,
+    drone_height_above_liftoff_m,
+    mass_kg_per_m,
+    diameter_m,
+    cd,
+    rho,
+    drone_speed_mps,
+    headwind_mps,
+    crosswind_mps,
+    climb_rate_mps,
+    ds_m,
+    max_s_m,
+    include_drag,
+    H_min,
+    H_max,
+    Ty_min,
+    Ty_max,
+    iterations_ty=40,
+    iterations_h=45,
+):
+    """
+    Ground-contact 3D endpoint solve.
+    Finds H0 and Ty0 such that the ground-lift-off curve reaches the drone height at:
+      x = target_x_m
+      y = target_y_m
+
+    This fixes the crosswind issue where the cable bows sideways but should still end at the drone.
+    The solve is nested:
+      1. For each Ty0, solve H0 to match x.
+      2. Adjust Ty0 until final y matches target_y_m.
+    """
+    if Ty_min >= Ty_max:
+        return None, None, None, None, None, (
+            "Ty0 lower bracket must be less than Ty0 upper bracket."
+        )
+
+    def run_ty(Ty):
+        H, x_end, y_end, df, err = solve_H0_for_ground_range_given_Ty(
+            target_x_m,
+            drone_height_above_liftoff_m,
+            mass_kg_per_m,
+            diameter_m,
+            cd,
+            rho,
+            drone_speed_mps,
+            headwind_mps,
+            crosswind_mps,
+            climb_rate_mps,
+            Ty,
+            ds_m,
+            max_s_m,
+            include_drag,
+            H_min,
+            H_max,
+            iterations=iterations_h,
+        )
+        if err:
+            return None, None, None, None, err
+        return H, x_end, y_end, df, None
+
+    # Scan Ty bracket first to find a valid sign change in final y error.
+    scan_Ty = np.linspace(Ty_min, Ty_max, 25)
+    scan = []
+    failed = []
+
+    for Ty in scan_Ty:
+        H, x_end, y_end, df, err = run_ty(float(Ty))
+        if err:
+            failed.append((float(Ty), err))
+            continue
+
+        y_err = y_end - target_y_m
+        scan.append({
+            "Ty": float(Ty),
+            "H": H,
+            "x": x_end,
+            "y": y_end,
+            "y_err": y_err,
+            "df": df,
+        })
+
+        if abs(y_err) < 1e-4:
+            return H, float(Ty), x_end, y_end, df, None
+
+    if len(scan) == 0:
+        return None, None, None, None, None, (
+            "Could not find any Ty0 value where the inner H0 solve succeeded. "
+            "Widen H0 bracket, widen Ty0 bracket, increase max cable length, or try Auto/Fully suspended mode."
+        )
+
+    # Find a sign-changing pair. Prefer the pair nearest target y.
+    bracket = None
+    for a, b in zip(scan[:-1], scan[1:]):
+        if a["y_err"] == 0:
+            return a["H"], a["Ty"], a["x"], a["y"], a["df"], None
+        if a["y_err"] * b["y_err"] <= 0:
+            bracket = (a, b)
+            break
+
+    if bracket is None:
+        y_values = [r["y"] for r in scan]
+        Ty_values = [r["Ty"] for r in scan]
+        closest = min(scan, key=lambda r: abs(r["y_err"]))
+        return None, None, None, None, None, (
+            f"Could not bracket final y={target_y_m:.2f} m within Ty0 range. "
+            f"Valid scan final-y range was {min(y_values):.2f} m to {max(y_values):.2f} m "
+            f"over Ty0={min(Ty_values):.2f} N to {max(Ty_values):.2f} N. "
+            f"Closest was Ty0={closest['Ty']:.3g} N giving y≈{closest['y']:.2f} m. "
+            "Widen the Ty0 bracket."
+        )
+
+    lo = bracket[0]
+    hi = bracket[1]
+
+    # Bisection on Ty0 to match y.
+    best = min([lo, hi], key=lambda r: abs(r["y_err"]))
+
+    for _ in range(iterations_ty):
+        mid_Ty = 0.5 * (lo["Ty"] + hi["Ty"])
+        H, x_end, y_end, df, err = run_ty(mid_Ty)
+
+        if err:
+            # If one mid-run fails, stop gracefully with the best valid result.
+            break
+
+        mid = {
+            "Ty": mid_Ty,
+            "H": H,
+            "x": x_end,
+            "y": y_end,
+            "y_err": y_end - target_y_m,
+            "df": df,
+        }
+
+        if abs(mid["y_err"]) < abs(best["y_err"]):
+            best = mid
+
+        if lo["y_err"] * mid["y_err"] <= 0:
+            hi = mid
+        else:
+            lo = mid
+
+    return best["H"], best["Ty"], best["x"], best["y"], best["df"], None
+
+
 # ============================================================
 # Fully suspended source-to-drone approximate model
 # ============================================================
@@ -518,7 +756,8 @@ def simulate_suspended_two_point_approx(
 
     sag_mid = w * D * D / (8.0 * H)
 
-    # Crosswind: wind +Y pushes cable +Y. Sign follows crosswind input.
+    # Crosswind: wind +Y pushes cable +Y in the middle.
+    # Endpoints remain fixed at y=0 because the cable is connected to source and drone.
     q_lat = 0.5 * rho * cd * diameter_m * abs(crosswind_mps) * crosswind_mps
     lateral_bow_mid = q_lat * D * D / (8.0 * H)
 
@@ -1035,16 +1274,22 @@ with st.sidebar:
     st.header("Tension")
     tension_mode = st.radio(
         "Ground-contact tension mode",
-        ["Use specified H0", "Solve H0 to match drone ground range"],
-        index = 1, # default to solve H0
+        ["Use specified H0 / Ty0", "Solve H0 and Ty0 to match drone X/Y endpoint"],
+        index=1, # default to endpoint solve
         help=(
-            "The solve-H0 option only applies to the ground-contact/lift-off model. "
-            "Fully suspended and Auto-suspended modes use the specified H0."
+            "The solve option only applies to the ground-contact/lift-off model. "
+            "It solves H0 and Ty0 together so the cable reaches drone height at the selected ground range and final lateral y=0. "
+            "Fully suspended and Auto-suspended modes use the specified H0/source tension."
         ),
     )
     H0_N = st.number_input("Specified H0 / source horizontal tension (N)", min_value=0.001, max_value=5000.0, value=10.0, step=1.0)
     H_min = st.number_input("H0 lower bracket for ground-contact solve (N)", min_value=0.001, max_value=1000.0, value=0.1, step=0.1)
     H_max = st.number_input("H0 upper bracket for ground-contact solve (N)", min_value=0.001, max_value=20000.0, value=300.0, step=10.0)
+
+    st.caption("Ty0 is lateral tension at the lift-off point. It is solved automatically in endpoint-solve mode.")
+    initial_lateral_tension_N = st.number_input("Specified Ty0 for ground-contact model (N)", min_value=-1000.0, max_value=1000.0, value=0.0, step=0.1)
+    Ty_min = st.number_input("Ty0 lower bracket for endpoint solve (N)", min_value=-5000.0, max_value=5000.0, value=-50.0, step=1.0)
+    Ty_max = st.number_input("Ty0 upper bracket for endpoint solve (N)", min_value=-5000.0, max_value=5000.0, value=50.0, step=1.0)
 
     st.header("Cable properties")
     cable_mass_kg_per_km = st.number_input(
@@ -1060,7 +1305,6 @@ with st.sidebar:
     crosswind_mps = st.number_input("Crosswind (m/s, positive = local +Y)", min_value=-40.0, max_value=40.0, value=2.0, step=1.0)
     cd = st.number_input("Cable drag coefficient Cd", min_value=0.0, max_value=3.0, value=1.2, step=0.1)
     rho = st.number_input("Air density rho (kg/m³)", min_value=0.5, max_value=1.5, value=1.180, step=0.005, format="%.3f")
-    initial_lateral_tension_N = st.number_input("Initial lateral tension Ty0 for ground-contact model (N)", min_value=-100.0, max_value=100.0, value=0.0, step=0.1)
 
     st.header("Numerics")
     ds_m = st.number_input("Arc-length / point spacing ds (m)", min_value=0.05, max_value=20.0, value=2.0, step=0.5)
@@ -1175,6 +1419,7 @@ diameter_m = cable_diameter_mm / 1000.0
 
 model_used = None
 H_used = H0_N
+Ty_used = initial_lateral_tension_N
 df_local = None
 messages = []
 
@@ -1198,9 +1443,9 @@ suspended_min_z = float(suspended_world["z_world_m"].min())
 if cable_regime == "Fully suspended source-to-drone":
     df_local = suspended_local
     model_used = "fully suspended source-to-drone"
-    if tension_mode == "Solve H0 to match drone ground range":
+    if tension_mode == "Solve H0 and Ty0 to match drone X/Y endpoint":
         messages.append(
-            "Solve-H0 is a ground-contact/lift-off option. In fully suspended mode, the app uses the specified H0/source tension."
+            "Solve-H0/Ty0 is a ground-contact/lift-off option. In fully suspended mode, the app uses the specified H0/source tension."
         )
     if suspended_min_z < ground_z - 1e-6:
         messages.append(
@@ -1212,18 +1457,19 @@ elif cable_regime == "Auto: suspended first, ground-contact if needed":
     if suspended_min_z >= ground_z - 1e-6:
         df_local = suspended_local
         model_used = "auto → fully suspended"
-        if tension_mode == "Solve H0 to match drone ground range":
+        if tension_mode == "Solve H0 and Ty0 to match drone X/Y endpoint":
             messages.append(
                 "Auto selected the fully suspended model because the source-to-drone cable stays above ground. "
-                "The ground-contact H0 solve was therefore not used."
+                "The ground-contact H0/Ty0 solve was therefore not used."
             )
     else:
         messages.append(
             f"Auto: suspended curve dips below ground (min Z={suspended_min_z:.2f} m), so switching to ground-contact/lift-off model."
         )
-        if tension_mode == "Solve H0 to match drone ground range":
-            H_used, solved_x, df_local, error = solve_H0_for_ground_range(
+        if tension_mode == "Solve H0 and Ty0 to match drone X/Y endpoint":
+            H_used, Ty_used, solved_x, solved_y, df_local, error = solve_H0_Ty0_for_ground_endpoint(
                 drone_ground_range_m,
+                0.0,  # local final drone y
                 drone_height_above_liftoff_m,
                 mass_kg_per_m,
                 diameter_m,
@@ -1233,12 +1479,13 @@ elif cable_regime == "Auto: suspended first, ground-contact if needed":
                 headwind_mps,
                 crosswind_mps,
                 climb_rate_mps,
-                initial_lateral_tension_N,
                 ds_m,
                 max_s_m,
                 include_drag,
                 H_min,
                 H_max,
+                Ty_min,
+                Ty_max,
             )
             if error:
                 st.error(error)
@@ -1266,9 +1513,10 @@ elif cable_regime == "Auto: suspended first, ground-contact if needed":
 
 else:  # Ground-contact / lift-off
     model_used = "ground-contact / lift-off"
-    if tension_mode == "Solve H0 to match drone ground range":
-        H_used, solved_x, df_local, error = solve_H0_for_ground_range(
+    if tension_mode == "Solve H0 and Ty0 to match drone X/Y endpoint":
+        H_used, Ty_used, solved_x, solved_y, df_local, error = solve_H0_Ty0_for_ground_endpoint(
             drone_ground_range_m,
+            0.0,  # local final drone y
             drone_height_above_liftoff_m,
             mass_kg_per_m,
             diameter_m,
@@ -1278,12 +1526,13 @@ else:  # Ground-contact / lift-off
             headwind_mps,
             crosswind_mps,
             climb_rate_mps,
-            initial_lateral_tension_N,
             ds_m,
             max_s_m,
             include_drag,
             H_min,
             H_max,
+            Ty_min,
+            Ty_max,
         )
         if error:
             st.error(error)
@@ -1308,14 +1557,23 @@ else:  # Ground-contact / lift-off
         if not reached:
             st.warning("Ground-contact model did not reach selected drone height within max cable length.")
 
-    # Detect the common invalidity: ground-contact curve reaches drone height beyond actual drone x.
+    # Detect common invalidity: ground-contact curve endpoint does not match actual drone x/y.
     if df_local is not None and len(df_local) > 0:
         x_at_height = float(df_local["x_local_m"].iloc[-1])
-        if x_at_height > drone_ground_range_m * 1.02:
+        y_at_height = float(df_local["y_local_m"].iloc[-1])
+
+        if x_at_height > drone_ground_range_m * 1.02 or x_at_height < drone_ground_range_m * 0.98:
             messages.append(
                 f"Warning: ground-contact model reaches drone height at x≈{x_at_height:.1f} m, "
-                f"but the drone range is only {drone_ground_range_m:.1f} m. "
-                "This suggests the ground-contact assumption is invalid; use Auto or Fully suspended mode."
+                f"but the drone range is {drone_ground_range_m:.1f} m. "
+                "This suggests the specified H0/Ty0 assumption is inconsistent; use endpoint solve or Auto/Fully suspended mode."
+            )
+
+        if abs(y_at_height) > max(1.0, 0.02 * drone_ground_range_m):
+            messages.append(
+                f"Warning: ground-contact model reaches drone height at y≈{y_at_height:.1f} m, "
+                "but the drone final local y is 0. "
+                "This suggests specified Ty0 is inconsistent; use endpoint solve for crosswind cases."
             )
 
 if df_local is None or len(df_local) < 2:
@@ -1323,6 +1581,13 @@ if df_local is None or len(df_local) < 2:
     st.stop()
 
 df = attach_world_coordinates(df_local, liftoff_xyz, drone_heading_deg)
+
+endpoint_x_local = float(df_local["x_local_m"].iloc[-1])
+endpoint_y_local = float(df_local["y_local_m"].iloc[-1])
+endpoint_z_local = float(df_local["z_local_m"].iloc[-1])
+endpoint_error_x = endpoint_x_local - drone_ground_range_m
+endpoint_error_y = endpoint_y_local - 0.0
+endpoint_error_z = endpoint_z_local - drone_height_above_liftoff_m
 
 
 # ============================================================
@@ -1388,12 +1653,26 @@ else:
 
 st.subheader("Cable model result")
 
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3, col4, col5, col6 = st.columns(6)
 col1.metric("Model used", model_used)
 col2.metric("H used", f"{H_used:.3g} N")
-col3.metric("Min cable Z", f"{float(df['z_world_m'].min()):.2f} m")
-col4.metric("Cable end X", f"{float(df['x_world_m'].iloc[-1]):.1f} m")
-col5.metric("Cable end Z", f"{float(df['z_world_m'].iloc[-1]):.1f} m")
+col3.metric("Ty0 used", f"{Ty_used:.3g} N")
+col4.metric("Min cable Z", f"{float(df['z_world_m'].min()):.2f} m")
+col5.metric("End local y", f"{endpoint_y_local:.2f} m")
+col6.metric("Cable end Z", f"{float(df['z_world_m'].iloc[-1]):.1f} m")
+
+endpoint_table = pd.DataFrame([
+    {"Metric": "Target local X", "Value": f"{drone_ground_range_m:.3f} m"},
+    {"Metric": "Cable endpoint local X", "Value": f"{endpoint_x_local:.3f} m"},
+    {"Metric": "Endpoint X error", "Value": f"{endpoint_error_x:.3f} m"},
+    {"Metric": "Target local Y", "Value": "0.000 m"},
+    {"Metric": "Cable endpoint local Y", "Value": f"{endpoint_y_local:.3f} m"},
+    {"Metric": "Endpoint Y error", "Value": f"{endpoint_error_y:.3f} m"},
+    {"Metric": "Target local Z", "Value": f"{drone_height_above_liftoff_m:.3f} m"},
+    {"Metric": "Cable endpoint local Z", "Value": f"{endpoint_z_local:.3f} m"},
+    {"Metric": "Endpoint Z error", "Value": f"{endpoint_error_z:.3f} m"},
+])
+st.dataframe(endpoint_table, hide_index=True, use_container_width=True)
 
 for msg in messages:
     st.warning(msg)
@@ -1534,7 +1813,7 @@ with tab5:
     st.download_button(
         "Download cable points CSV",
         data=csv,
-        file_name="cable_points_model_selector.csv",
+        file_name="cable_points_model_selector_ty0_solve.csv",
         mime="text/csv",
     )
 
@@ -1580,6 +1859,16 @@ This mode forces the cable to terminate at the drone position. It uses a parabol
         """
 where `D` is drone ground range, `h` is drone height above source, `w` is cable weight per metre, and `H` is the specified horizontal/source tension.
 
+Crosswind creates a lateral bow in the middle of the cable, but the endpoints remain fixed at the source and drone:
+"""
+    )
+
+    st.latex(r"""
+    y(u) = y_{mid}\,4u(1-u)
+    """)
+
+    st.markdown(
+        """
 This is a stable approximation, not a full boundary-value cable solver. A full model would require either paid-out cable length or a more complete tension boundary condition.
 
 ### Ground-contact / lift-off mode
@@ -1616,12 +1905,23 @@ with distributed force:
         """
 Use this only when there is likely to be a real ground-contact / lift-off point.
 
-### Cutter siting logic
+### Ground-contact endpoint solve with crosswind
 
-The app checks whether the simulated cable enters the protected convex-hull volume. If it does, it finds the last crossing of the selected cutter height before volume entry. The cutter is centred on that crossing and oriented perpendicular to the local horizontal cable path.
-
-### Limitations
-
-This remains a quasi-static engineering visualiser. It does not include cable whipping, gust response, reel friction, ground sliding friction, propwash, impacts, or cutter structural dynamics.
+In crosswind, the cable can bow sideways but should still terminate at the drone. The endpoint solve finds both `H0` and `Ty0` such that:
 """
     )
+
+    st.latex(r"""
+    x_{end} = x_{drone},
+    \quad
+    y_{end} = y_{drone}
+    """)
+
+    st.markdown(
+        """
+The app does this with a nested solve:
+
+1. For a trial `Ty0`, solve `H0` so the cable reaches the target drone range.
+2. Adjust `Ty0` until the final lateral endpoint matches the drone local `y=0`.
+
+If the solver cannot bracket the final lateral position, widen the `Ty0` lower/upper bracket.
