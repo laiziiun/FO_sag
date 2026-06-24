@@ -1925,4 +1925,13 @@ The app does this with a nested solve:
 2. Adjust `Ty0` until the final lateral endpoint matches the drone local `y=0`.
 
 If the solver cannot bracket the final lateral position, widen the `Ty0` lower/upper bracket.
+
+### Cutter siting logic
+
+The app checks whether the simulated cable enters the protected convex-hull volume. If it does, it finds the last crossing of the selected cutter height before volume entry. The cutter is centred on that crossing and oriented perpendicular to the local horizontal cable path.
+
+### Limitations
+
+This remains a quasi-static engineering visualiser. It does not include cable whipping, gust response, reel friction, ground sliding friction, propwash, impacts, or cutter structural dynamics.
 """
+    )
