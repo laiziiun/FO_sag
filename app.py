@@ -1036,6 +1036,7 @@ with st.sidebar:
     tension_mode = st.radio(
         "Ground-contact tension mode",
         ["Use specified H0", "Solve H0 to match drone ground range"],
+        index = 1, # default to solve H0
         help=(
             "The solve-H0 option only applies to the ground-contact/lift-off model. "
             "Fully suspended and Auto-suspended modes use the specified H0."
