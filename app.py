@@ -1245,10 +1245,10 @@ with st.sidebar:
 
     st.header("Drone current state")
     drone_ground_range_m = st.number_input(
-        "Drone ground range from source (m)", min_value=1.0, max_value=20000.0, value=900.0, step=50.0
+        "Drone ground range from source (m)", min_value=1.0, max_value=20000.0, value=620.0, step=50.0
     )
     drone_height_above_liftoff_m = st.number_input(
-        "Drone height above source (m)", min_value=0.1, max_value=2000.0, value=120.0, step=10.0
+        "Drone height above source (m)", min_value=0.1, max_value=2000.0, value=30.0, step=10.0
     )
     drone_heading_deg = st.number_input(
         "Drone heading (deg, 0=+X, 90=+Y)", min_value=-360.0, max_value=360.0, value=0.0, step=5.0
@@ -1293,16 +1293,16 @@ with st.sidebar:
 
     st.header("Cable properties")
     cable_mass_kg_per_km = st.number_input(
-        "Cable mass / linear density (kg/km)", min_value=0.001, max_value=50.0, value=0.30, step=0.01, format="%.4f"
+        "Cable mass / linear density (kg/km)", min_value=0.001, max_value=50.0, value=0.14, step=0.01, format="%.4f"
     )
     cable_diameter_mm = st.number_input("Cable diameter (mm)", min_value=0.01, max_value=20.0, value=0.8, step=0.1)
 
     st.header("Drone motion and wind")
     include_drag = st.checkbox("Include aerodynamic drag", value=True)
-    drone_speed_mps = st.number_input("Drone forward speed (m/s)", min_value=0.0, max_value=80.0, value=10.0, step=1.0)
+    drone_speed_mps = st.number_input("Drone forward speed (m/s)", min_value=0.0, max_value=80.0, value=0.0, step=1.0)
     climb_rate_mps = st.number_input("Drone climb rate / vertical cable speed (m/s)", min_value=-20.0, max_value=20.0, value=0.0, step=0.5)
-    headwind_mps = st.number_input("Headwind (m/s, positive = against drone)", min_value=-40.0, max_value=40.0, value=2.0, step=1.0)
-    crosswind_mps = st.number_input("Crosswind (m/s, positive = local +Y)", min_value=-40.0, max_value=40.0, value=2.0, step=1.0)
+    headwind_mps = st.number_input("Headwind (m/s, positive = against drone)", min_value=-40.0, max_value=40.0, value=0.0, step=1.0)
+    crosswind_mps = st.number_input("Crosswind (m/s, positive = local +Y)", min_value=-40.0, max_value=40.0, value=4.0, step=1.0)
     cd = st.number_input("Cable drag coefficient Cd", min_value=0.0, max_value=3.0, value=1.2, step=0.1)
     rho = st.number_input("Air density rho (kg/m³)", min_value=0.5, max_value=1.5, value=1.180, step=0.005, format="%.3f")
 
