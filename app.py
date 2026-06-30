@@ -1319,7 +1319,7 @@ st.subheader("Protected asset footprint points")
 
 if "points_df" not in st.session_state:
     st.session_state.points_df = pd.DataFrame({
-        "x_m": [650.0, 850.0, 820.0, 640.0, 740.0],
+        "x_m": [600.0, 850.0, 820.0, 600.0, 740.0],
         "y_m": [-80.0, -70.0, 90.0, 75.0, 0.0],
     })
 
@@ -1378,7 +1378,7 @@ with st.expander("Quick add / delete / reset footprint points", expanded=True):
 
     if d4.button("Reset default rectangle", use_container_width=True):
         st.session_state.points_df = pd.DataFrame({
-            "x_m": [650.0, 850.0, 820.0, 640.0, 740.0],
+            "x_m": [600.0, 850.0, 820.0, 600.0, 740.0],
             "y_m": [-80.0, -70.0, 90.0, 75.0, 0.0],
         })
         st.session_state.points_editor_version += 1
